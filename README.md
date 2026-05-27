@@ -8,9 +8,11 @@
 
 [![License MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=yellow)](https://www.python.org/)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey)](#)
 [![Hardware](https://img.shields.io/badge/Hardware-ACR122U-orange)](https://www.amazon.fr/dp/B086HTYWR4)
 [![Status](https://img.shields.io/badge/Status-Beta-green.svg)](#)
+
+[Installation](#installation) · [Usage](#usage) · [Keyboard Emulation](#keyboard-emulation) · [Example Output](#example-console-output)
 
 </div>
 
@@ -157,6 +159,8 @@ This repository is intended as a playground for experimenting with:
 * APDU commands
 * Keyboard emulation
 * Card interactions using the ACS ACR122U reader
+
+The long-term goal is to provide a persistent RFID/NFC virtual keyboard service that can start automatically with the system, especially through a `systemd` service on Linux.
 
 ## License
 
