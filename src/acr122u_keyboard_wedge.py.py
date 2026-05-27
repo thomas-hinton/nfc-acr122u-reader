@@ -1,65 +1,185 @@
+#!/usr/bin/env python3
+import logging
+import signal
+import time
+
+from evdev import UInput, ecodes as e
 from smartcard.System import readers
 from smartcard.Exceptions import NoCardException, CardConnectionException
-import pyautogui
-import time
 
 # APDU command used to retrieve card UID
 GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]
+READER_NAME_HINT = "ACR122"
+POLL_WHEN_READY = 0.08
+POLL_WHEN_CARD_PRESENT = 0.20
+READER_RETRY_SECONDS = 2.0
+READER_CLEAR_THRESHOLD = 3
+KEY_DELAY_SECONDS = 0.01
+
+
+STOP = False
+
+
+KEY_MAP = {
+    "0": e.KEY_0,
+    "1": e.KEY_1,
+    "2": e.KEY_2,
+    "3": e.KEY_3,
+    "4": e.KEY_4,
+    "5": e.KEY_5,
+    "6": e.KEY_6,
+    "7": e.KEY_7,
+    "8": e.KEY_8,
+    "9": e.KEY_9,
+    "A": e.KEY_A,
+    "B": e.KEY_B,
+    "C": e.KEY_C,
+    "D": e.KEY_D,
+    "E": e.KEY_E,
+    "F": e.KEY_F,
+}
+
+
+def handle_stop(signum, frame):
+    del signum, frame
+    global STOP
+    STOP = True
+
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
 
 def to_hex(data):
     """Convert byte array to uppercase hexadecimal string."""
-    return "".join(f"{b:02X}" for b in data)
+    return "".join(f"{byte:02X}" for byte in data)
+
+
+def choose_reader():
+    available = readers()
+    if not available:
+        return None
+
+    for reader in available:
+        if READER_NAME_HINT.lower() in str(reader).lower():
+            return reader
+
+    return available[0]
+
+
+def create_virtual_keyboard():
+    capabilities = {
+        e.EV_KEY: sorted({*KEY_MAP.values(), e.KEY_ENTER}),
+    }
+    ui = UInput(capabilities, name="ACR122U RFID Keyboard")
+    logging.info("Virtual keyboard ready")
+    return ui
+
+
+def tap_key(ui, key_code):
+    ui.write(e.EV_KEY, key_code, 1)
+    ui.write(e.EV_KEY, key_code, 0)
+    ui.syn()
+    time.sleep(KEY_DELAY_SECONDS)
+
+
+def emit_uid(ui, uid):
+    for char in uid:
+        key_code = KEY_MAP.get(char)
+        if key_code is None:
+            raise ValueError(f"Unsupported UID character: {char!r}")
+        tap_key(ui, key_code)
+
+    tap_key(ui, e.KEY_ENTER)
+
+
+def read_uid_once(reader):
+    connection = reader.createConnection()
+    connection.connect()
+    try:
+        data, sw1, sw2 = connection.transmit(GET_UID)
+        if sw1 == 0x90 and sw2 == 0x00 and data:
+            return to_hex(data)
+        return None
+    finally:
+        try:
+            connection.disconnect()
+        except Exception:
+            pass
 
 
 def main():
-    available_readers = readers()
+    setup_logging()
+    signal.signal(signal.SIGINT, handle_stop)
+    signal.signal(signal.SIGTERM, handle_stop)
 
-    if not available_readers:
-        print("No NFC reader detected.")
-        return
+    ui = create_virtual_keyboard()
 
-    reader = available_readers[0]
-    
-    print(f"Reader detected: {reader}")
-    print("Waiting for an NFC card...")
-    print("Scanned card UIDs will be typed automatically followed by Enter.")
-
+    locked_until_removed = False
     last_uid = None
-    card_present = False
+    no_card_streak = 0
+    last_reader_name = None
+    missing_reader_logged = False
 
-    while True:
-        try:
-            connection = reader.createConnection()
-            connection.connect()
+    try:
+        while not STOP:
+            reader = choose_reader()
+            if reader is None:
+                if not missing_reader_logged:
+                    logging.warning("No PC/SC reader detected")
+                    missing_reader_logged = True
+                time.sleep(READER_RETRY_SECONDS)
+                continue
 
-            data, sw1, sw2 = connection.transmit(GET_UID)
-            uid = to_hex(data)
+            missing_reader_logged = False
 
-            if sw1 == 0x90 and sw2 == 0x00:
-                if not card_present or uid != last_uid:
-                    print(f"Card detected: {uid}")
+            reader_name = str(reader)
+            if reader_name != last_reader_name:
+                logging.info("Using reader: %s", reader_name)
+                last_reader_name = reader_name
 
-                    pyautogui.write(uid)
-                    pyautogui.press("enter")
+            try:
+                uid = read_uid_once(reader)
+                no_card_streak = 0
 
+                if uid is None:
+                    time.sleep(POLL_WHEN_CARD_PRESENT)
+                    continue
+
+                if not locked_until_removed:
+                    logging.info("Card detected: %s", uid)
+                    emit_uid(ui, uid)
+                    locked_until_removed = True
                     last_uid = uid
-                    card_present = True
+                else:
+                    if uid != last_uid:
+                        logging.info(
+                            "Card change ignored while waiting for removal: previous=%s new=%s",
+                            last_uid,
+                            uid,
+                        )
 
-            connection.disconnect()
-            time.sleep(0.3)
+                time.sleep(POLL_WHEN_CARD_PRESENT)
 
-        except NoCardException:
-            card_present = False
-            last_uid = None
-            time.sleep(0.2)
+            except (NoCardException, CardConnectionException):
+                no_card_streak += 1
+                if locked_until_removed and no_card_streak >= READER_CLEAR_THRESHOLD:
+                    locked_until_removed = False
+                    last_uid = None
+                    logging.info("Reader clear, re-armed")
 
-        except CardConnectionException:
-            time.sleep(0.5)
+                time.sleep(POLL_WHEN_READY)
 
-        except KeyboardInterrupt:
-            print("\nProgram terminated.")
-            break
+            except Exception:
+                logging.exception("Unexpected RFID error")
+                time.sleep(1.0)
+
+    finally:
+        ui.close()
+        logging.info("RFID service stopped")
 
 
 if __name__ == "__main__":
