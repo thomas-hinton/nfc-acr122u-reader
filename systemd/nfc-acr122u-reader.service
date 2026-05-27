@@ -1,0 +1,17 @@
+[Unit]
+Description=ACR122U RFID/NFC keyboard wedge
+After=pcscd.socket
+Wants=pcscd.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/nfc-acr122u-reader/acr122u_keyboard_wedge.py
+Restart=always
+RestartSec=2
+User=root
+WorkingDirectory=/opt/nfc-acr122u-reader
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
