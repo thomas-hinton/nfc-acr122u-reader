@@ -3,24 +3,27 @@ from smartcard.Exceptions import NoCardException, CardConnectionException
 import pyautogui
 import time
 
+# APDU command used to retrieve card UID
 GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]
 
 
 def to_hex(data):
+    """Convert byte array to uppercase hexadecimal string."""
     return "".join(f"{b:02X}" for b in data)
 
 
 def main():
-    r = readers()
+    available_readers = readers()
 
-    if not r:
-        print("Aucun lecteur détecté")
+    if not available_readers:
+        print("No NFC reader detected.")
         return
 
-    reader = r[0]
-    print(f"Lecteur : {reader}")
-    print("Approche une carte NFC...")
-    print("Quand une carte est scannée, son UID sera tapé au clavier puis Entrée.")
+    reader = available_readers[0]
+    
+    print(f"Reader detected: {reader}")
+    print("Waiting for an NFC card...")
+    print("Scanned card UIDs will be typed automatically followed by Enter.")
 
     last_uid = None
     card_present = False
@@ -35,7 +38,7 @@ def main():
 
             if sw1 == 0x90 and sw2 == 0x00:
                 if not card_present or uid != last_uid:
-                    print(f"Carte détectée : {uid}")
+                    print(f"Card detected: {uid}")
 
                     pyautogui.write(uid)
                     pyautogui.press("enter")
@@ -55,7 +58,7 @@ def main():
             time.sleep(0.5)
 
         except KeyboardInterrupt:
-            print("\nArrêt")
+            print("\nProgram terminated.")
             break
 
 
